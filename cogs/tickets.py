@@ -10,6 +10,9 @@ from typing import Optional
 import json
 import asyncio
 
+# Constants
+TICKET_NUMBER_FORMAT = "{:04d}"  # Format for ticket numbers (e.g., 0001, 0002)
+
 
 class Tickets(commands.Cog):
     """Ticket system for user support."""
@@ -115,7 +118,7 @@ class Tickets(commands.Cog):
                 if role.permissions.administrator:
                     overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
-            channel_name = f"ticket-{ticket_number:04d}"
+            channel_name = f"ticket-{TICKET_NUMBER_FORMAT.format(ticket_number)}"
             channel = await guild.create_text_channel(
                 name=channel_name,
                 category=category,
@@ -133,7 +136,7 @@ class Tickets(commands.Cog):
                 title="🎫 Support Ticket",
                 description=(
                     f"**Opened by:** {user.mention}\n"
-                    f"**Ticket Number:** #{ticket_number:04d}\n"
+                    f"**Ticket Number:** #{TICKET_NUMBER_FORMAT.format(ticket_number)}\n"
                     f"**Reason:** {reason}\n\n"
                     f"Our staff team will be with you shortly!\n"
                     f"To close this ticket, use `/closeticket`"
@@ -151,50 +154,6 @@ class Tickets(commands.Cog):
             return None, "❌ I don't have permission to create channels!"
         except Exception as e:
             return None, f"❌ Failed to create ticket: {str(e)}"
-
-
-class TicketButton(discord.ui.View):
-    """Persistent view for ticket creation button."""
-    
-    def __init__(self, cog: Tickets):
-        """Initialize the view with persistent timeout.
-        
-        Args:
-            cog: The Tickets cog instance
-        """
-        super().__init__(timeout=None)
-        self.cog = cog
-    
-    @discord.ui.button(
-        label="Open Ticket",
-        style=discord.ButtonStyle.primary,
-        emoji="🎫",
-        custom_id="create_ticket_button"
-    )
-    async def create_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Handle ticket creation button click.
-        
-        Args:
-            interaction: Discord interaction
-            button: Button instance
-        """
-        channel, error = await self.cog._create_ticket_channel(
-            interaction.guild,
-            interaction.user,
-            "Created via ticket panel"
-        )
-        
-        if error:
-            await interaction.response.send_message(error, ephemeral=True)
-        else:
-            await interaction.response.send_message(
-                f"✅ Ticket created! {channel.mention}",
-                ephemeral=True
-            )
-
-
-# Note: Tickets class is defined above TicketButton class
-# to allow TicketButton to reference it
     
     async def cog_load(self):
         """Called when the cog is loaded."""
@@ -464,6 +423,46 @@ class TicketButton(discord.ui.View):
         
         fake_interaction = FakeInteraction(ctx)
         await self.create_ticket(fake_interaction, reason)
+
+
+class TicketButton(discord.ui.View):
+    """Persistent view for ticket creation button."""
+    
+    def __init__(self, cog: Tickets):
+        """Initialize the view with persistent timeout.
+        
+        Args:
+            cog: The Tickets cog instance
+        """
+        super().__init__(timeout=None)
+        self.cog = cog
+    
+    @discord.ui.button(
+        label="Open Ticket",
+        style=discord.ButtonStyle.primary,
+        emoji="🎫",
+        custom_id="create_ticket_button"
+    )
+    async def create_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle ticket creation button click.
+        
+        Args:
+            interaction: Discord interaction
+            button: Button instance
+        """
+        channel, error = await self.cog._create_ticket_channel(
+            interaction.guild,
+            interaction.user,
+            "Created via ticket panel"
+        )
+        
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                f"✅ Ticket created! {channel.mention}",
+                ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot):

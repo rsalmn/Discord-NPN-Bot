@@ -5,6 +5,9 @@ from discord.ext import commands
 from utils.database import db
 from typing import Optional
 
+# Constants
+MAX_FORUM_TAGS = 5  # Discord's maximum number of tags per forum post
+
 
 class Forums(commands.Cog):
     """Forum post management system."""
@@ -58,7 +61,7 @@ class Forums(commands.Cog):
             thread = await forum.create_thread(
                 name=title,
                 content=content,
-                applied_tags=applied_tags[:5] if applied_tags else None,  # Max 5 tags
+                applied_tags=applied_tags[:MAX_FORUM_TAGS] if applied_tags else None,
                 reason=f"Forum post created by {interaction.user.name}"
             )
             
