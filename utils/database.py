@@ -48,6 +48,29 @@ class Database:
                 )
             """)
             
+            # Ticket panels table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_panels (
+                    panel_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER,
+                    channel_id INTEGER,
+                    message_id INTEGER,
+                    title TEXT DEFAULT 'Support Tickets',
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Ticket configuration table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_config (
+                    guild_id INTEGER PRIMARY KEY,
+                    category_id INTEGER,
+                    support_role_ids TEXT,
+                    ticket_counter INTEGER DEFAULT 0
+                )
+            """)
+            
             # Anti-spam configuration
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS antispam_config (

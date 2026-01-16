@@ -10,12 +10,23 @@ A feature-rich, production-ready Discord bot built with Python 3.10+ and discord
 - Optional @everyone mentions
 - Admin-only command for security
 
-### 🎫 Ticket System
-- Users can create support tickets with a single command
-- Automatically creates private channels for each ticket
-- Only ticket creator and admins can see the ticket
-- Easy ticket closing with automatic channel deletion
-- Organized in a dedicated "Tickets" category
+### 🎫 Ticket System (Improved!)
+- **Button-Based Ticket Panel**: Users click a button to open tickets (no commands needed!)
+- **Configurable Ticket Panels**: Admins can post ticket panels in any channel
+- **Role-Based Access**: Configure specific support roles who can access tickets
+- **Organized Tickets**: Numbered tickets (ticket-0001, ticket-0002, etc.)
+- **Custom Categories**: Set custom category for ticket channels
+- **Support Role Access**: Only configured support roles + ticket creator can see tickets
+- **Auto-Close**: Tickets automatically delete after closing
+- **Legacy Command Support**: Still supports `/ticket` command for backward compatibility
+
+### 📝 Forum Management
+- **Create Forum Posts**: Create new threads in forum channels with titles and content
+- **Edit Forum Posts**: Edit the initial message of forum threads
+- **Delete Forum Posts**: Delete forum threads
+- **Thread Management**: Lock, unlock, archive, unarchive, pin, and unpin forum threads
+- **Tag Support**: Apply tags when creating forum posts
+- **Staff-Only**: All commands require `manage_threads` permission
 
 ### 👋 Welcome/Leave Messages
 - Customizable welcome messages when users join
@@ -207,9 +218,17 @@ The included `render.yaml` enables automatic deployments:
 #### Announcements
 - `/announce <channel> <title> <message> [mention_everyone]` - Create an announcement
 
-#### Tickets
-- `/ticket [reason]` - Create a support ticket
+#### Tickets (Improved!)
+- `/ticket_setup <channel> [title] [description]` - Setup a ticket panel with button in a channel
+- `/ticket_config [category] [support_roles]` - Configure ticket system (category and support roles)
+- `/ticket [reason]` - Create a support ticket (legacy command)
 - `/closeticket [reason]` - Close the current ticket
+
+#### Forum Management
+- `/forum_create <forum> <title> <content> [tags]` - Create a new forum post/thread
+- `/forum_edit <thread> <new_content>` - Edit a forum post's initial message
+- `/forum_delete <thread>` - Delete a forum post/thread
+- `/forum_manage <thread> <action>` - Manage thread (lock, unlock, archive, unarchive, pin, unpin)
 
 #### Welcome/Leave
 - `/setwelcome <channel> [message]` - Configure welcome messages
@@ -252,6 +271,60 @@ The included `render.yaml` enables automatic deployments:
 - `!help` - Show help message
 
 ## ⚙️ Configuration Guide
+
+### Setting Up the New Ticket System
+
+The improved ticket system uses buttons instead of commands for a better user experience!
+
+#### Step 1: Configure Ticket Settings (Optional but Recommended)
+
+```
+/ticket_config category:#tickets-category support_roles:Support Staff,Moderator
+```
+
+- **category**: Select or create a category where ticket channels will be created
+- **support_roles**: Comma-separated list of role names that should have access to all tickets
+
+#### Step 2: Post a Ticket Panel
+
+```
+/ticket_setup channel:#support title:Support Tickets description:Need help? Click the button below!
+```
+
+This will post a beautiful embed with an "Open Ticket" button in your chosen channel.
+
+#### Step 3: Users Click the Button!
+
+Users simply click the "Open Ticket" button and a private ticket channel is automatically created with:
+- Access for the ticket creator
+- Access for configured support roles
+- Access for administrators
+- Numbered ticket names (ticket-0001, ticket-0002, etc.)
+
+#### Benefits of the New System:
+- ✅ No need to remember commands
+- ✅ Professional-looking ticket panel
+- ✅ Role-based access control
+- ✅ Better organization with numbered tickets
+- ✅ Can post multiple panels in different channels
+
+### Managing Forum Posts
+
+Forum management commands allow you to manage forum channels effectively.
+
+#### Creating a Forum Post
+
+```
+/forum_create forum:#announcements title:Important Update content:Check out our new features! tags:News,Important
+```
+
+#### Managing Forum Threads
+
+```
+/forum_manage thread:[select thread] action:lock
+```
+
+Available actions: lock, unlock, archive, unarchive, pin, unpin
 
 ### Setting Up Welcome Messages
 
