@@ -124,9 +124,10 @@ class NPNBot(commands.Bot):
                     f"• Use `{PREFIX}help` for prefix commands\n"
                     f"• Most commands require administrator permissions\n\n"
                     f"**Features:**\n"
-                    f"📢 Announcements • 🎫 Tickets • 👋 Welcome Messages\n"
+                    f"📢 Announcements • 🎫 Tickets (Button-Based!) • 👋 Welcome Messages\n"
                     f"🛡️ Anti-Spam • 🎉 Giveaways • 📌 Sticky Messages\n"
-                    f"💤 AFK System • 🎭 Reaction Roles • 📊 Polls • 💰 Donations\n\n"
+                    f"💤 AFK System • 🎭 Reaction Roles • 📊 Polls • 💰 Donations\n"
+                    f"📝 Forum Management\n\n"
                     f"Need help? Run `/help` to get started!"
                 ),
                 color=0x5865F2
