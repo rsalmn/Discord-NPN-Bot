@@ -60,6 +60,7 @@ class NPNBot(commands.Bot):
             'cogs.reactionroles',
             'cogs.voting',
             'cogs.donations',
+            'cogs.forums',
         ]
     
     async def setup_hook(self):

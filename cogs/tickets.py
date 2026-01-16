@@ -7,6 +7,148 @@ from utils.checks import is_admin, is_mod
 from utils.embeds import EmbedTemplates
 from datetime import datetime
 from typing import Optional
+import json
+
+
+class TicketButton(discord.ui.View):
+    """Persistent view for ticket creation button."""
+    
+    def __init__(self):
+        """Initialize the view with persistent timeout."""
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(
+        label="Open Ticket",
+        style=discord.ButtonStyle.primary,
+        emoji="🎫",
+        custom_id="create_ticket_button"
+    )
+    async def create_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle ticket creation button click.
+        
+        Args:
+            interaction: Discord interaction
+            button: Button instance
+        """
+        guild = interaction.guild
+        user = interaction.user
+        
+        # Check if user already has an open ticket
+        existing_ticket = await db.fetchone(
+            "SELECT channel_id FROM tickets WHERE guild_id = ? AND user_id = ? AND status = 'open'",
+            (guild.id, user.id)
+        )
+        
+        if existing_ticket:
+            channel = guild.get_channel(existing_ticket['channel_id'])
+            if channel:
+                await interaction.response.send_message(
+                    f"❌ You already have an open ticket: {channel.mention}",
+                    ephemeral=True
+                )
+                return
+        
+        # Get ticket configuration
+        config = await db.fetchone(
+            "SELECT * FROM ticket_config WHERE guild_id = ?",
+            (guild.id,)
+        )
+        
+        # Create ticket channel
+        try:
+            # Get or create tickets category
+            category = None
+            if config and config['category_id']:
+                category = guild.get_channel(config['category_id'])
+            
+            if not category:
+                category = discord.utils.get(guild.categories, name="Tickets")
+                if not category:
+                    category = await guild.create_category("Tickets")
+            
+            # Get ticket number
+            ticket_number = 1
+            if config and config['ticket_counter']:
+                ticket_number = config['ticket_counter'] + 1
+            
+            # Update ticket counter
+            if config:
+                await db.execute(
+                    "UPDATE ticket_config SET ticket_counter = ? WHERE guild_id = ?",
+                    (ticket_number, guild.id)
+                )
+            else:
+                await db.execute(
+                    "INSERT INTO ticket_config (guild_id, ticket_counter) VALUES (?, ?)",
+                    (guild.id, ticket_number)
+                )
+            
+            # Create channel with proper permissions
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            }
+            
+            # Add permissions for support roles if configured
+            if config and config['support_role_ids']:
+                support_role_ids = json.loads(config['support_role_ids'])
+                for role_id in support_role_ids:
+                    role = guild.get_role(role_id)
+                    if role:
+                        overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+            # Add permissions for admins (fallback)
+            for role in guild.roles:
+                if role.permissions.administrator:
+                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+            channel_name = f"ticket-{ticket_number:04d}"
+            channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites
+            )
+            
+            # Store ticket in database
+            await db.execute(
+                "INSERT INTO tickets (guild_id, channel_id, user_id, status) VALUES (?, ?, ?, 'open')",
+                (guild.id, channel.id, user.id)
+            )
+            
+            # Send initial message in ticket
+            embed = discord.Embed(
+                title="🎫 Support Ticket",
+                description=(
+                    f"**Opened by:** {user.mention}\n"
+                    f"**Ticket Number:** #{ticket_number:04d}\n\n"
+                    f"Our staff team will be with you shortly!\n"
+                    f"Please describe your issue in detail.\n\n"
+                    f"To close this ticket, use `/closeticket`"
+                ),
+                color=0x5865F2,
+                timestamp=datetime.utcnow()
+            )
+            embed.set_footer(text=f"Ticket for {user.display_name}", icon_url=user.display_avatar.url)
+            
+            await channel.send(content=user.mention, embed=embed)
+            
+            # Confirm to user
+            await interaction.response.send_message(
+                f"✅ Ticket created! {channel.mention}",
+                ephemeral=True
+            )
+            
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ I don't have permission to create channels!",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Failed to create ticket: {str(e)}",
+                ephemeral=True
+            )
 
 
 class Tickets(commands.Cog):
@@ -20,10 +162,161 @@ class Tickets(commands.Cog):
         """
         self.bot = bot
     
+    async def cog_load(self):
+        """Called when the cog is loaded."""
+        # Add persistent view for ticket buttons
+        self.bot.add_view(TicketButton())
+    
+    @app_commands.command(name="ticket_setup", description="Setup a ticket panel in a channel")
+    @app_commands.describe(
+        channel="The channel to post the ticket panel in",
+        title="Title for the ticket panel",
+        description="Description for the ticket panel"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticket_setup(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        title: str = "Support Tickets",
+        description: str = "Click the button below to open a support ticket"
+    ):
+        """Setup a ticket panel in a channel.
+        
+        Args:
+            interaction: Discord interaction
+            channel: Target channel
+            title: Panel title
+            description: Panel description
+        """
+        try:
+            # Create embed for ticket panel
+            embed = discord.Embed(
+                title=f"🎫 {title}",
+                description=description,
+                color=0x5865F2
+            )
+            embed.add_field(
+                name="How to create a ticket:",
+                value="Click the **Open Ticket** button below to create a private support ticket.",
+                inline=False
+            )
+            embed.set_footer(text=f"Ticket system for {interaction.guild.name}")
+            
+            # Send the panel with the button
+            view = TicketButton()
+            message = await channel.send(embed=embed, view=view)
+            
+            # Store panel in database
+            await db.execute(
+                "INSERT INTO ticket_panels (guild_id, channel_id, message_id, title, description) VALUES (?, ?, ?, ?, ?)",
+                (interaction.guild.id, channel.id, message.id, title, description)
+            )
+            
+            await interaction.response.send_message(
+                f"✅ Ticket panel created in {channel.mention}!",
+                ephemeral=True
+            )
+            
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ I don't have permission to post in that channel!",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Failed to create ticket panel: {str(e)}",
+                ephemeral=True
+            )
+    
+    @app_commands.command(name="ticket_config", description="Configure ticket system settings")
+    @app_commands.describe(
+        category="Category to create tickets in",
+        support_roles="Comma-separated list of role names/IDs that can access tickets"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticket_config(
+        self,
+        interaction: discord.Interaction,
+        category: Optional[discord.CategoryChannel] = None,
+        support_roles: Optional[str] = None
+    ):
+        """Configure ticket system settings.
+        
+        Args:
+            interaction: Discord interaction
+            category: Ticket category
+            support_roles: Support role names or IDs
+        """
+        guild = interaction.guild
+        
+        # Check if config exists
+        config = await db.fetchone(
+            "SELECT * FROM ticket_config WHERE guild_id = ?",
+            (guild.id,)
+        )
+        
+        try:
+            # Parse support roles
+            role_ids = []
+            if support_roles:
+                role_parts = [r.strip() for r in support_roles.split(',')]
+                for role_part in role_parts:
+                    # Try to find role by ID or name
+                    role = None
+                    if role_part.isdigit():
+                        role = guild.get_role(int(role_part))
+                    else:
+                        role = discord.utils.get(guild.roles, name=role_part)
+                    
+                    if role:
+                        role_ids.append(role.id)
+            
+            # Update or insert configuration
+            if config:
+                updates = []
+                params = []
+                
+                if category:
+                    updates.append("category_id = ?")
+                    params.append(category.id)
+                
+                if role_ids:
+                    updates.append("support_role_ids = ?")
+                    params.append(json.dumps(role_ids))
+                
+                if updates:
+                    params.append(guild.id)
+                    await db.execute(
+                        f"UPDATE ticket_config SET {', '.join(updates)} WHERE guild_id = ?",
+                        tuple(params)
+                    )
+            else:
+                await db.execute(
+                    "INSERT INTO ticket_config (guild_id, category_id, support_role_ids, ticket_counter) VALUES (?, ?, ?, 0)",
+                    (guild.id, category.id if category else None, json.dumps(role_ids) if role_ids else None)
+                )
+            
+            # Build response message
+            response = "✅ Ticket configuration updated!\n\n"
+            if category:
+                response += f"**Category:** {category.mention}\n"
+            if role_ids:
+                role_mentions = [f"<@&{role_id}>" for role_id in role_ids]
+                response += f"**Support Roles:** {', '.join(role_mentions)}\n"
+            
+            await interaction.response.send_message(response, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Failed to update configuration: {str(e)}",
+                ephemeral=True
+            )
+    
     @app_commands.command(name="ticket", description="Create a new support ticket")
     @app_commands.describe(reason="Reason for opening the ticket")
     async def create_ticket(self, interaction: discord.Interaction, reason: str = "No reason provided"):
-        """Create a new support ticket.
+        """Create a new support ticket (legacy command).
         
         Args:
             interaction: Discord interaction
@@ -47,12 +340,40 @@ class Tickets(commands.Cog):
                 )
                 return
         
+        # Get ticket configuration
+        config = await db.fetchone(
+            "SELECT * FROM ticket_config WHERE guild_id = ?",
+            (guild.id,)
+        )
+        
         # Create ticket channel
         try:
-            # Find or create tickets category
-            category = discord.utils.get(guild.categories, name="Tickets")
+            # Get or create tickets category
+            category = None
+            if config and config['category_id']:
+                category = guild.get_channel(config['category_id'])
+            
             if not category:
-                category = await guild.create_category("Tickets")
+                category = discord.utils.get(guild.categories, name="Tickets")
+                if not category:
+                    category = await guild.create_category("Tickets")
+            
+            # Get ticket number
+            ticket_number = 1
+            if config and config['ticket_counter']:
+                ticket_number = config['ticket_counter'] + 1
+            
+            # Update ticket counter
+            if config:
+                await db.execute(
+                    "UPDATE ticket_config SET ticket_counter = ? WHERE guild_id = ?",
+                    (ticket_number, guild.id)
+                )
+            else:
+                await db.execute(
+                    "INSERT INTO ticket_config (guild_id, ticket_counter) VALUES (?, ?)",
+                    (guild.id, ticket_number)
+                )
             
             # Create channel with proper permissions
             overwrites = {
@@ -61,12 +382,20 @@ class Tickets(commands.Cog):
                 guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             }
             
-            # Add permissions for admins
+            # Add permissions for support roles if configured
+            if config and config['support_role_ids']:
+                support_role_ids = json.loads(config['support_role_ids'])
+                for role_id in support_role_ids:
+                    role = guild.get_role(role_id)
+                    if role:
+                        overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+            # Add permissions for admins (fallback)
             for role in guild.roles:
                 if role.permissions.administrator:
                     overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
-            channel_name = f"ticket-{user.name}-{user.discriminator}"
+            channel_name = f"ticket-{ticket_number:04d}"
             channel = await guild.create_text_channel(
                 name=channel_name,
                 category=category,
@@ -84,6 +413,7 @@ class Tickets(commands.Cog):
                 title="🎫 Support Ticket",
                 description=(
                     f"**Opened by:** {user.mention}\n"
+                    f"**Ticket Number:** #{ticket_number:04d}\n"
                     f"**Reason:** {reason}\n\n"
                     f"Our staff team will be with you shortly!\n"
                     f"To close this ticket, use `/closeticket`"
@@ -215,3 +545,4 @@ async def setup(bot: commands.Bot):
         bot: The bot instance
     """
     await bot.add_cog(Tickets(bot))
+
