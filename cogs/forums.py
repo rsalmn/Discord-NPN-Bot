@@ -48,6 +48,9 @@ class Forums(commands.Cog):
         try:
             # Parse tags if provided
             applied_tags = []
+            invalid_tags = []
+            truncated = False
+            
             if tags:
                 tag_names = [t.strip() for t in tags.split(',')]
                 available_tags = {tag.name.lower(): tag for tag in forum.available_tags}
@@ -56,17 +59,31 @@ class Forums(commands.Cog):
                     tag_name_lower = tag_name.lower()
                     if tag_name_lower in available_tags:
                         applied_tags.append(available_tags[tag_name_lower])
+                    else:
+                        invalid_tags.append(tag_name)
+                
+                # Check if we need to truncate
+                if len(applied_tags) > MAX_FORUM_TAGS:
+                    truncated = True
+                    applied_tags = applied_tags[:MAX_FORUM_TAGS]
             
             # Create the forum post (thread)
             thread = await forum.create_thread(
                 name=title,
                 content=content,
-                applied_tags=applied_tags[:MAX_FORUM_TAGS] if applied_tags else None,
+                applied_tags=applied_tags if applied_tags else None,
                 reason=f"Forum post created by {interaction.user.name}"
             )
             
+            # Build response message
+            response = f"✅ Forum post created successfully! {thread.thread.mention}"
+            if invalid_tags:
+                response += f"\n⚠️ Invalid tags (not found): {', '.join(invalid_tags)}"
+            if truncated:
+                response += f"\n⚠️ Only the first {MAX_FORUM_TAGS} tags were applied (Discord limit)"
+            
             await interaction.response.send_message(
-                f"✅ Forum post created successfully! {thread.thread.mention}",
+                response,
                 ephemeral=True
             )
             

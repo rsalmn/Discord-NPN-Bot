@@ -9,9 +9,12 @@ from datetime import datetime
 from typing import Optional
 import json
 import asyncio
+import logging
 
 # Constants
 TICKET_NUMBER_FORMAT = "{:04d}"  # Format for ticket numbers (e.g., 0001, 0002)
+
+logger = logging.getLogger('discord_bot')
 
 
 class Tickets(commands.Cog):
@@ -109,9 +112,9 @@ class Tickets(commands.Cog):
                         role = guild.get_role(role_id)
                         if role:
                             overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-                except (json.JSONDecodeError, TypeError):
-                    # If JSON is malformed, just skip support roles
-                    pass
+                except (json.JSONDecodeError, TypeError) as e:
+                    # If JSON is malformed, log error and skip support roles
+                    logger.error(f"Malformed support_role_ids in ticket config for guild {guild.id}: {e}")
             
             # Add permissions for admins (fallback)
             for role in guild.roles:
@@ -252,6 +255,7 @@ class Tickets(commands.Cog):
         try:
             # Parse support roles
             role_ids = []
+            not_found_roles = []
             if support_roles:
                 role_parts = [r.strip() for r in support_roles.split(',')]
                 for role_part in role_parts:
@@ -264,6 +268,8 @@ class Tickets(commands.Cog):
                     
                     if role:
                         role_ids.append(role.id)
+                    else:
+                        not_found_roles.append(role_part)
             
             # Update or insert configuration
             if config:
@@ -297,6 +303,8 @@ class Tickets(commands.Cog):
             if role_ids:
                 role_mentions = [f"<@&{role_id}>" for role_id in role_ids]
                 response += f"**Support Roles:** {', '.join(role_mentions)}\n"
+            if not_found_roles:
+                response += f"\n⚠️ Roles not found: {', '.join(not_found_roles)}"
             
             await interaction.response.send_message(response, ephemeral=True)
             
