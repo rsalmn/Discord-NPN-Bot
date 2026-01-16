@@ -8,31 +8,37 @@ from utils.embeds import EmbedTemplates
 from datetime import datetime
 from typing import Optional
 import json
+import asyncio
 
 
-class TicketButton(discord.ui.View):
-    """Persistent view for ticket creation button."""
+class Tickets(commands.Cog):
+    """Ticket system for user support."""
     
-    def __init__(self):
-        """Initialize the view with persistent timeout."""
-        super().__init__(timeout=None)
-    
-    @discord.ui.button(
-        label="Open Ticket",
-        style=discord.ButtonStyle.primary,
-        emoji="🎫",
-        custom_id="create_ticket_button"
-    )
-    async def create_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Handle ticket creation button click.
+    def __init__(self, bot: commands.Bot):
+        """Initialize the tickets cog.
         
         Args:
-            interaction: Discord interaction
-            button: Button instance
+            bot: The bot instance
         """
-        guild = interaction.guild
-        user = interaction.user
+        self.bot = bot
+        self._ticket_lock = asyncio.Lock()  # Lock for ticket counter to prevent race conditions
+    
+    async def _create_ticket_channel(
+        self,
+        guild: discord.Guild,
+        user: discord.Member,
+        reason: str = "No reason provided"
+    ) -> tuple[Optional[discord.TextChannel], Optional[str]]:
+        """Helper method to create a ticket channel.
         
+        Args:
+            guild: The guild
+            user: The user creating the ticket
+            reason: Reason for the ticket
+            
+        Returns:
+            Tuple of (channel, error_message). Channel is None if error occurred.
+        """
         # Check if user already has an open ticket
         existing_ticket = await db.fetchone(
             "SELECT channel_id FROM tickets WHERE guild_id = ? AND user_id = ? AND status = 'open'",
@@ -42,11 +48,7 @@ class TicketButton(discord.ui.View):
         if existing_ticket:
             channel = guild.get_channel(existing_ticket['channel_id'])
             if channel:
-                await interaction.response.send_message(
-                    f"❌ You already have an open ticket: {channel.mention}",
-                    ephemeral=True
-                )
-                return
+                return None, f"❌ You already have an open ticket: {channel.mention}"
         
         # Get ticket configuration
         config = await db.fetchone(
@@ -54,7 +56,6 @@ class TicketButton(discord.ui.View):
             (guild.id,)
         )
         
-        # Create ticket channel
         try:
             # Get or create tickets category
             category = None
@@ -66,22 +67,29 @@ class TicketButton(discord.ui.View):
                 if not category:
                     category = await guild.create_category("Tickets")
             
-            # Get ticket number
-            ticket_number = 1
-            if config and config['ticket_counter']:
-                ticket_number = config['ticket_counter'] + 1
-            
-            # Update ticket counter
-            if config:
-                await db.execute(
-                    "UPDATE ticket_config SET ticket_counter = ? WHERE guild_id = ?",
-                    (ticket_number, guild.id)
+            # Get and increment ticket number atomically
+            async with self._ticket_lock:
+                # Re-fetch config inside lock to ensure we have latest counter
+                config = await db.fetchone(
+                    "SELECT * FROM ticket_config WHERE guild_id = ?",
+                    (guild.id,)
                 )
-            else:
-                await db.execute(
-                    "INSERT INTO ticket_config (guild_id, ticket_counter) VALUES (?, ?)",
-                    (guild.id, ticket_number)
-                )
+                
+                ticket_number = 1
+                if config and config['ticket_counter']:
+                    ticket_number = config['ticket_counter'] + 1
+                
+                # Update ticket counter
+                if config:
+                    await db.execute(
+                        "UPDATE ticket_config SET ticket_counter = ? WHERE guild_id = ?",
+                        (ticket_number, guild.id)
+                    )
+                else:
+                    await db.execute(
+                        "INSERT INTO ticket_config (guild_id, ticket_counter) VALUES (?, ?)",
+                        (guild.id, ticket_number)
+                    )
             
             # Create channel with proper permissions
             overwrites = {
@@ -92,11 +100,15 @@ class TicketButton(discord.ui.View):
             
             # Add permissions for support roles if configured
             if config and config['support_role_ids']:
-                support_role_ids = json.loads(config['support_role_ids'])
-                for role_id in support_role_ids:
-                    role = guild.get_role(role_id)
-                    if role:
-                        overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                try:
+                    support_role_ids = json.loads(config['support_role_ids'])
+                    for role_id in support_role_ids:
+                        role = guild.get_role(role_id)
+                        if role:
+                            overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                except (json.JSONDecodeError, TypeError):
+                    # If JSON is malformed, just skip support roles
+                    pass
             
             # Add permissions for admins (fallback)
             for role in guild.roles:
@@ -121,9 +133,9 @@ class TicketButton(discord.ui.View):
                 title="🎫 Support Ticket",
                 description=(
                     f"**Opened by:** {user.mention}\n"
-                    f"**Ticket Number:** #{ticket_number:04d}\n\n"
+                    f"**Ticket Number:** #{ticket_number:04d}\n"
+                    f"**Reason:** {reason}\n\n"
                     f"Our staff team will be with you shortly!\n"
-                    f"Please describe your issue in detail.\n\n"
                     f"To close this ticket, use `/closeticket`"
                 ),
                 color=0x5865F2,
@@ -133,39 +145,61 @@ class TicketButton(discord.ui.View):
             
             await channel.send(content=user.mention, embed=embed)
             
-            # Confirm to user
+            return channel, None
+            
+        except discord.Forbidden:
+            return None, "❌ I don't have permission to create channels!"
+        except Exception as e:
+            return None, f"❌ Failed to create ticket: {str(e)}"
+
+
+class TicketButton(discord.ui.View):
+    """Persistent view for ticket creation button."""
+    
+    def __init__(self, cog: Tickets):
+        """Initialize the view with persistent timeout.
+        
+        Args:
+            cog: The Tickets cog instance
+        """
+        super().__init__(timeout=None)
+        self.cog = cog
+    
+    @discord.ui.button(
+        label="Open Ticket",
+        style=discord.ButtonStyle.primary,
+        emoji="🎫",
+        custom_id="create_ticket_button"
+    )
+    async def create_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle ticket creation button click.
+        
+        Args:
+            interaction: Discord interaction
+            button: Button instance
+        """
+        channel, error = await self.cog._create_ticket_channel(
+            interaction.guild,
+            interaction.user,
+            "Created via ticket panel"
+        )
+        
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+        else:
             await interaction.response.send_message(
                 f"✅ Ticket created! {channel.mention}",
                 ephemeral=True
             )
-            
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "❌ I don't have permission to create channels!",
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Failed to create ticket: {str(e)}",
-                ephemeral=True
-            )
 
 
-class Tickets(commands.Cog):
-    """Ticket system for user support."""
-    
-    def __init__(self, bot: commands.Bot):
-        """Initialize the tickets cog.
-        
-        Args:
-            bot: The bot instance
-        """
-        self.bot = bot
+# Note: Tickets class is defined above TicketButton class
+# to allow TicketButton to reference it
     
     async def cog_load(self):
         """Called when the cog is loaded."""
         # Add persistent view for ticket buttons
-        self.bot.add_view(TicketButton())
+        self.bot.add_view(TicketButton(self))
     
     @app_commands.command(name="ticket_setup", description="Setup a ticket panel in a channel")
     @app_commands.describe(
@@ -204,7 +238,7 @@ class Tickets(commands.Cog):
             embed.set_footer(text=f"Ticket system for {interaction.guild.name}")
             
             # Send the panel with the button
-            view = TicketButton()
+            view = TicketButton(self)
             message = await channel.send(embed=embed, view=view)
             
             # Store panel in database
@@ -322,123 +356,17 @@ class Tickets(commands.Cog):
             interaction: Discord interaction
             reason: Reason for the ticket
         """
-        guild = interaction.guild
-        user = interaction.user
-        
-        # Check if user already has an open ticket
-        existing_ticket = await db.fetchone(
-            "SELECT channel_id FROM tickets WHERE guild_id = ? AND user_id = ? AND status = 'open'",
-            (guild.id, user.id)
+        channel, error = await self._create_ticket_channel(
+            interaction.guild,
+            interaction.user,
+            reason
         )
         
-        if existing_ticket:
-            channel = guild.get_channel(existing_ticket['channel_id'])
-            if channel:
-                await interaction.response.send_message(
-                    f"❌ You already have an open ticket: {channel.mention}",
-                    ephemeral=True
-                )
-                return
-        
-        # Get ticket configuration
-        config = await db.fetchone(
-            "SELECT * FROM ticket_config WHERE guild_id = ?",
-            (guild.id,)
-        )
-        
-        # Create ticket channel
-        try:
-            # Get or create tickets category
-            category = None
-            if config and config['category_id']:
-                category = guild.get_channel(config['category_id'])
-            
-            if not category:
-                category = discord.utils.get(guild.categories, name="Tickets")
-                if not category:
-                    category = await guild.create_category("Tickets")
-            
-            # Get ticket number
-            ticket_number = 1
-            if config and config['ticket_counter']:
-                ticket_number = config['ticket_counter'] + 1
-            
-            # Update ticket counter
-            if config:
-                await db.execute(
-                    "UPDATE ticket_config SET ticket_counter = ? WHERE guild_id = ?",
-                    (ticket_number, guild.id)
-                )
-            else:
-                await db.execute(
-                    "INSERT INTO ticket_config (guild_id, ticket_counter) VALUES (?, ?)",
-                    (guild.id, ticket_number)
-                )
-            
-            # Create channel with proper permissions
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            }
-            
-            # Add permissions for support roles if configured
-            if config and config['support_role_ids']:
-                support_role_ids = json.loads(config['support_role_ids'])
-                for role_id in support_role_ids:
-                    role = guild.get_role(role_id)
-                    if role:
-                        overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-            
-            # Add permissions for admins (fallback)
-            for role in guild.roles:
-                if role.permissions.administrator:
-                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-            
-            channel_name = f"ticket-{ticket_number:04d}"
-            channel = await guild.create_text_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites
-            )
-            
-            # Store ticket in database
-            await db.execute(
-                "INSERT INTO tickets (guild_id, channel_id, user_id, status) VALUES (?, ?, ?, 'open')",
-                (guild.id, channel.id, user.id)
-            )
-            
-            # Send initial message in ticket
-            embed = discord.Embed(
-                title="🎫 Support Ticket",
-                description=(
-                    f"**Opened by:** {user.mention}\n"
-                    f"**Ticket Number:** #{ticket_number:04d}\n"
-                    f"**Reason:** {reason}\n\n"
-                    f"Our staff team will be with you shortly!\n"
-                    f"To close this ticket, use `/closeticket`"
-                ),
-                color=0x5865F2,
-                timestamp=datetime.utcnow()
-            )
-            embed.set_footer(text=f"Ticket for {user.display_name}", icon_url=user.display_avatar.url)
-            
-            await channel.send(content=user.mention, embed=embed)
-            
-            # Confirm to user
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+        else:
             await interaction.response.send_message(
                 f"✅ Ticket created! {channel.mention}",
-                ephemeral=True
-            )
-            
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "❌ I don't have permission to create channels!",
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Failed to create ticket: {str(e)}",
                 ephemeral=True
             )
     

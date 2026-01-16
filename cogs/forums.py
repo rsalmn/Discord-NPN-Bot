@@ -3,7 +3,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.database import db
-from utils.checks import is_admin
 from typing import Optional
 
 
