@@ -20,19 +20,11 @@ class Database:
         """Ensure the data directory exists."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
     
-    async def connect(self) -> aiosqlite.Connection:
-        """Create a database connection.
-        
-        Returns:
-            Database connection object
-        """
-        return await aiosqlite.connect(self.db_path)
-    
     async def init_db(self):
         """Initialize database tables."""
-        async with await self.connect() as db:
+        async with aiosqlite.connect(self.db_path) as conn:
             # Guild configuration table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_config (
                     guild_id INTEGER PRIMARY KEY,
                     prefix TEXT DEFAULT '!',
@@ -44,7 +36,7 @@ class Database:
             """)
             
             # Tickets table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS tickets (
                     ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER,
@@ -57,7 +49,7 @@ class Database:
             """)
             
             # Anti-spam configuration
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS antispam_config (
                     guild_id INTEGER PRIMARY KEY,
                     enabled INTEGER DEFAULT 0,
@@ -68,7 +60,7 @@ class Database:
             """)
             
             # Giveaways table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS giveaways (
                     giveaway_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER,
@@ -83,7 +75,7 @@ class Database:
             """)
             
             # Sticky messages table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS sticky_messages (
                     channel_id INTEGER PRIMARY KEY,
                     guild_id INTEGER,
@@ -93,7 +85,7 @@ class Database:
             """)
             
             # AFK users table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS afk_users (
                     user_id INTEGER,
                     guild_id INTEGER,
@@ -104,7 +96,7 @@ class Database:
             """)
             
             # Reaction roles table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS reaction_roles (
                     message_id INTEGER,
                     emoji TEXT,
@@ -115,7 +107,7 @@ class Database:
             """)
             
             # Polls table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS polls (
                     poll_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER,
@@ -130,7 +122,7 @@ class Database:
             """)
             
             # Poll votes table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS poll_votes (
                     poll_id INTEGER,
                     user_id INTEGER,
@@ -140,7 +132,7 @@ class Database:
             """)
             
             # Donations table
-            await db.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS donations (
                     donation_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER,
@@ -151,7 +143,7 @@ class Database:
                 )
             """)
             
-            await db.commit()
+            await conn.commit()
     
     async def get_guild_config(self, guild_id: int) -> Optional[Dict[str, Any]]:
         """Get configuration for a guild.
@@ -162,9 +154,9 @@ class Database:
         Returns:
             Guild configuration dictionary or None
         """
-        async with await self.connect() as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
                 "SELECT * FROM guild_config WHERE guild_id = ?", (guild_id,)
             ) as cursor:
                 row = await cursor.fetchone()
@@ -177,9 +169,9 @@ class Database:
             guild_id: Discord guild ID
             **kwargs: Configuration parameters to set
         """
-        async with await self.connect() as db:
+        async with aiosqlite.connect(self.db_path) as conn:
             # Check if config exists
-            async with db.execute(
+            async with conn.execute(
                 "SELECT guild_id FROM guild_config WHERE guild_id = ?", (guild_id,)
             ) as cursor:
                 exists = await cursor.fetchone()
@@ -188,7 +180,7 @@ class Database:
                 # Update existing config
                 set_clause = ", ".join([f"{key} = ?" for key in kwargs.keys()])
                 values = list(kwargs.values()) + [guild_id]
-                await db.execute(
+                await conn.execute(
                     f"UPDATE guild_config SET {set_clause} WHERE guild_id = ?",
                     values
                 )
@@ -197,12 +189,12 @@ class Database:
                 columns = ["guild_id"] + list(kwargs.keys())
                 placeholders = ", ".join(["?"] * len(columns))
                 values = [guild_id] + list(kwargs.values())
-                await db.execute(
+                await conn.execute(
                     f"INSERT INTO guild_config ({', '.join(columns)}) VALUES ({placeholders})",
                     values
                 )
             
-            await db.commit()
+            await conn.commit()
     
     async def execute(self, query: str, parameters: tuple = ()) -> None:
         """Execute a query without returning results.
@@ -211,9 +203,9 @@ class Database:
             query: SQL query string
             parameters: Query parameters
         """
-        async with await self.connect() as db:
-            await db.execute(query, parameters)
-            await db.commit()
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute(query, parameters)
+            await conn.commit()
     
     async def fetchone(self, query: str, parameters: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch one row from a query.
@@ -225,9 +217,9 @@ class Database:
         Returns:
             Row as dictionary or None
         """
-        async with await self.connect() as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, parameters) as cursor:
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(query, parameters) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
     
@@ -241,9 +233,9 @@ class Database:
         Returns:
             List of rows as dictionaries
         """
-        async with await self.connect() as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, parameters) as cursor:
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(query, parameters) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
